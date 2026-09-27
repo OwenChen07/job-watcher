@@ -1,0 +1,7 @@
+config.json
+apps_script.local.gs
+profile.md
+candidates.json
+selected.json
+state/
+__pycache__/
