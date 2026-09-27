@@ -383,7 +383,9 @@ def in_sheet(c, existing):
     for r in existing:
         if u and norm_url(r.get("url", "")) == u:
             return True
-        if norm_company(r.get("company", "")) == cc and r.get("term", "").upper() == c["term"].rstrip("?"):
+        rterm = str(r.get("term", "")).strip().upper()
+        # a blank Term on an existing row matches any term
+        if norm_company(r.get("company", "")) == cc and rterm in ("", c["term"].rstrip("?")):
             rw = set(norm(r.get("role", "")).split()) - {"intern", "internship", "co", "op", "coop"}
             if rw and rw <= tw:
                 return True
