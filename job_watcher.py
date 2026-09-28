@@ -47,9 +47,11 @@ def load_config():
     }
 
 
-# Only consider postings this recent (days). Seen-state is the primary dedupe;
-# this just bounds the first run and ignores stale re-shuffles.
-MAX_AGE_DAYS = 3
+# Normally only postings this recent (days) are considered. Seen-state is the primary
+# dedupe; this just bounds the window and ignores stale re-shuffles.
+RECENT_DAYS = 3
+# If nothing unseen was posted within RECENT_DAYS, fall back to postings up to this old.
+MAX_AGE_DAYS = 7
 TOP_N_CANDIDATES = 30
 
 SIMPLIFY_JSON = "https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/.github/scripts/listings.json"
@@ -451,6 +453,15 @@ def cmd_fetch():
             continue
         cands.append(score(c, cfg))
 
+    recent_cutoff = (NOW - timedelta(days=RECENT_DAYS)).date().isoformat()
+    recent = [c for c in cands if c["posted"] >= recent_cutoff]
+    fallback = not recent and bool(cands)
+    if not fallback:
+        # older postings stay unseen so a later quiet day can still use them
+        cands = recent
+    else:
+        for c in cands:
+            c["note"] = "; ".join(x for x in (c["note"], "older posting") if x)
     cands.sort(key=lambda c: (c["score"], c["posted"]), reverse=True)
     out = []
     for i, c in enumerate(cands):
@@ -463,11 +474,15 @@ def cmd_fetch():
         ))
     CANDIDATES_PATH.write_text(json.dumps(
         {"generated": NOW.isoformat(), "errors": errors, "total_new": len(out),
+         "window_days": MAX_AGE_DAYS if fallback else RECENT_DAYS, "fallback": fallback,
          "skipped_seen": skipped_seen, "skipped_in_sheet": skipped_sheet,
-         "all_keys": [c["key"] for c in out],
+         # keys marked seen on post: all recent ones normally, only the reviewed ones on a fallback day
+         "all_keys": [c["key"] for c in (out[:TOP_N_CANDIDATES] if fallback else out)],
          "candidates": out[:TOP_N_CANDIDATES]}, indent=1, ensure_ascii=False))
 
-    print(f"new={len(out)} skipped_seen={skipped_seen} skipped_in_sheet={skipped_sheet} errors={errors}")
+    if fallback:
+        print(f"No unseen postings in the last {RECENT_DAYS} days; fell back to the last {MAX_AGE_DAYS} days.")
+    print(f"new={len(out)} window={MAX_AGE_DAYS if fallback else RECENT_DAYS}d skipped_seen={skipped_seen} skipped_in_sheet={skipped_sheet} errors={errors}")
     for c in out[:TOP_N_CANDIDATES]:
         print(f"{c['rank']:>2} {c['score']:>3} {c['term']:<4} {c['kind']:<3} {c['company'][:22]:<22} "
               f"{c['title'][:60]:<60} {c['location'][:28]}")

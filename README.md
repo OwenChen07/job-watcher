@@ -9,7 +9,7 @@ Sources:
 - [speedyapply/2027-AI-College-Jobs](https://github.com/speedyapply/2027-AI-College-Jobs), US and international lists
 
 ## How it works
-1. `job_watcher.py fetch` pulls every source and keeps SWE/ML/data roles for Winter or Summer 2027 posted in the last 3 days. It drops MS/PhD-only, new-grad and US-citizenship-only postings, merges duplicates across lists, and scores the rest. Scoring favours the priority term, Canada (optional) and ML/infra/backend fit, and penalizes 8+ month terms and QA/analyst roles. Anything already in your sheet or shown before is skipped.
+1. `job_watcher.py fetch` pulls every source and keeps SWE/ML/data roles for Winter or Summer 2027 posted in the last 3 days, or the last 7 days if nothing new is left. It drops MS/PhD-only, new-grad and US-citizenship-only postings, merges duplicates across lists, and scores the rest. Scoring favours the priority term, Canada (optional) and ML/infra/backend fit, and penalizes 8+ month terms and QA/analyst roles. Anything already in your sheet or shown before is skipped.
 2. Claude reads the top 30 alongside your profile and picks up to 10.
 3. `job_watcher.py post` appends them to your sheet through a small Apps Script webhook. It also records every fetched posting in a hidden `_seen` tab, so nothing is shown twice. Because of this the script keeps no local state and runs fine in the cloud.
 

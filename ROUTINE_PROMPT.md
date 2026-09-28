@@ -29,7 +29,7 @@ Steps:
 1. Run the exports above, then `python3 job_watcher.py fetch`. It writes `candidates.json` with the top 30 unseen postings, ranked by a heuristic score. Postings already in the sheet or seen before are removed.
    - If `errors` mentions "sheet read" or "Missing webhook_url", stop and report it. Do not post.
    - If a single source errored, continue with the others and mention it in your report.
-2. Read `candidates.json`. Pick up to **10** postings, using the heuristic score as a starting point plus your judgement against my profile. Follow the profile's priorities for term, location and role type.
+2. Read `candidates.json`. If `fallback` is true, nothing new was posted in the last 3 days and these are older postings (up to 7 days). Pick from them the same way; their `note` says "older posting", so carry that into the notes. Pick up to **10** postings, using the heuristic score as a starting point plus your judgement against my profile. Follow the profile's priorities for term, location and role type.
    - Drop roles that are really hardware, QA-only, IT/support, analyst, sales/solutions, graduate-level, or need US citizenship or clearance.
    - Two postings for the same company and role in different cities count as one; prefer the one matching my location preference.
    - Candidates with `long_term: true` are 8+ month terms. Exclude them unless they are exceptional: a top-tier company, clearly high pay, or an unusually strong match for my background. If you include one, put "8-month" in the notes. "4 or 8 months" postings are not long-term.
