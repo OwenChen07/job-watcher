@@ -117,6 +117,16 @@ EXCLUDE_ROLE = re.compile(
     r"ecu|avionics|aerospace engineer|structural|materials|biomedical|"
     r"phd|ph\.d|master'?s|ms/phd|mba|new grad|graduate program|apprentice)\b", re.I)
 
+# Postings that require the applicant to already be in their graduating year; the title rarely
+# says this, but it's a hard "can't apply" when it does, unlike the soft scoring below.
+GRAD_YEAR_EXCLUDE = re.compile(
+    r"\b(class of|graduating|expected graduation)\D{0,12}20(2[5-8])\b|"
+    r"\bsenior[- ]year\b|\bfinal[- ]year\b|\brising senior\b", re.I)
+
+# Titles centered on mobile app dev (iOS/Android/React Native) - weak personal fit, not a hard
+# exclude since e.g. "Software Engineer, Mobile Platform" can still be backend-adjacent.
+MOBILE_FOCUS = re.compile(r"\b(ios|android|swift|kotlin|react native|mobile app)\b", re.I)
+
 ML_PAT = re.compile(r"\b(machine learning|ml|ai|artificial intelligence|deep learning|llm|"
                     r"computer vision|nlp|applied scien|research engineer|genai|perception)\b", re.I)
 SWE_PAT = re.compile(r"\b(software|developer|swe|sde|backend|back end|full ?stack|frontend|"
@@ -124,8 +134,11 @@ SWE_PAT = re.compile(r"\b(software|developer|swe|sde|backend|back end|full ?stac
                      r"mobile|cloud engineer|web|programmer|application develop)\b", re.I)
 GENERIC_ENG = re.compile(r"\b(engineer|engineering)\b", re.I)
 SOFTWARE_CATS = {"Software", "Software Engineering", "AI/ML/Data", "Data Science, AI & Machine Learning"}
-# 8+ month commitments ("8 months", "8-month", "12 month", "6-8 months"); "4 or 8 months" still allows 4.
-LONG_TERM = re.compile(r"\b(8|12|16)[ -]?months?\b|\b(eight|twelve|sixteen)[ -]?months?\b|\b8[ -]?mo\b", re.I)
+# 8+ month commitments ("8 months", "8-month", "12 month", "6-8 months", "fall/winter"); "4 or 8
+# months" still allows 4. Many extended co-ops (esp. Canadian) never spell out the length in the
+# listing at all - see FLEX_4/duration below, which flags that case for caution instead.
+LONG_TERM = re.compile(r"\b(8|12|16)[ -]?months?\b|\b(eight|twelve|sixteen)[ -]?months?\b|\b8[ -]?mo\b|"
+                       r"\bextended\b|\boff[- ]cycle\b|\bfall\s*/\s*winter\b|\bwinter\s*/\s*summer\b", re.I)
 FLEX_4 = re.compile(r"\b4[\s_-]*(or|/|to|-)[\s_-]*8\b|\b(4|four)[ -]?months?\b", re.I)
 LOW_FIT = re.compile(r"\b(analyst|firmware|embedded|solutions engineer|support engineer|it intern)\b", re.I)
 DATA_PAT = re.compile(r"\b(data scien|data engineer|analytics engineer)\b", re.I)
@@ -137,7 +150,7 @@ FIT_PAT = re.compile(r"\b(pytorch|infrastructure|platform|backend|back end|full 
 
 
 def role_kind(title, category=""):
-    if EXCLUDE_ROLE.search(title):
+    if EXCLUDE_ROLE.search(title) or GRAD_YEAR_EXCLUDE.search(title):
         return None
     if ML_PAT.search(title):
         return "ML"
@@ -331,10 +344,19 @@ def score(c, cfg):
         s -= 8
     if LOW_FIT.search(c["title"]):
         s -= 10
-    c["long_term"] = bool(LONG_TERM.search(c["title"] + " " + c["url"])) and not FLEX_4.search(c["title"] + " " + c["url"])
+    if MOBILE_FOCUS.search(c["title"]):
+        s -= 12
+    title_url = c["title"] + " " + c["url"]
+    duration_stated = bool(LONG_TERM.search(title_url) or FLEX_4.search(title_url))
+    c["long_term"] = bool(LONG_TERM.search(title_url)) and not FLEX_4.search(title_url)
     if c["long_term"]:
         s -= 25
         c["note"] = "; ".join(x for x in (c["note"], "8+ month term") if x)
+    elif not duration_stated:
+        # Listing doesn't say how long the term is; several past "4-month" assumptions turned
+        # out to be 8-month co-ops once opened, so treat unstated length as a mild risk, not a pass.
+        s -= 5
+        c["note"] = "; ".join(x for x in (c["note"], "duration not stated - verify not 8-month") if x)
     if c["top_company"] or "🔥" in c.get("raw_company", ""):
         s += 10
         reasons.append("top co.")
