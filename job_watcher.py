@@ -11,7 +11,10 @@ Subcommands:
 
 Config (env vars take precedence over config.json):
   JOB_WATCHER_WEBHOOK_URL, JOB_WATCHER_TOKEN
-  JOB_WATCHER_PRIORITY_TERM  W27 (default) or S27: the term that gets the bigger boost
+  JOB_WATCHER_TERMS          comma-separated terms to consider, e.g. "W27,S27" (default) or
+                             "S27,F27". Postings for any other term are dropped.
+  JOB_WATCHER_PRIORITY_TERM  which term in JOB_WATCHER_TERMS gets the bigger score boost;
+                             defaults to the first term listed.
   JOB_WATCHER_PREFER_CANADA  1 (default) or 0
 Seen-state is kept in the sheet's hidden _seen tab, so runs can be stateless (cloud).
 
@@ -39,10 +42,13 @@ def load_config():
     except Exception:
         pass
     env = os.environ
+    terms_raw = env.get("JOB_WATCHER_TERMS") or cfg.get("terms") or "W27,S27"
+    terms = [t.strip().upper() for t in terms_raw.split(",") if t.strip()]
     return {
         "webhook_url": env.get("JOB_WATCHER_WEBHOOK_URL") or cfg.get("webhook_url", ""),
         "token": env.get("JOB_WATCHER_TOKEN") or cfg.get("token", ""),
-        "priority_term": (env.get("JOB_WATCHER_PRIORITY_TERM") or cfg.get("priority_term") or "W27").upper(),
+        "terms": terms,
+        "priority_term": (env.get("JOB_WATCHER_PRIORITY_TERM") or cfg.get("priority_term") or (terms[0] if terms else "W27")).upper(),
         "prefer_canada": str(env.get("JOB_WATCHER_PREFER_CANADA", cfg.get("prefer_canada", "1"))).lower() not in ("0", "false", "no"),
     }
 
@@ -209,7 +215,7 @@ def short_location(locs):
 
 # ---------------------------------------------------------------- sources
 
-def from_simplify():
+def from_simplify(cfg):
     out = []
     data = json.loads(get(SIMPLIFY_JSON))
     cutoff = (NOW - timedelta(days=MAX_AGE_DAYS)).timestamp()
@@ -234,9 +240,11 @@ def from_simplify():
             term, note = "W27", "tagged 'Winter 2026' - verify start date"
         elif "Summer 2027" in terms:
             term = "S27"
+        elif "Fall 2027" in terms:
+            term = "F27"
         else:
             term = term_from_text(x.get("title", ""))
-        if term not in ("W27", "S27"):
+        if term not in cfg["terms"]:
             continue
         out.append(dict(
             source="Simplify", company=x.get("company_name", ""), title=x.get("title", ""),
@@ -247,7 +255,7 @@ def from_simplify():
     return out
 
 
-def from_canada():
+def from_canada(cfg):
     out = []
     md = get(CANADA_MD)
     last_company = ""
@@ -276,8 +284,8 @@ def from_canada():
         term = term_from_text(role)
         note = ""
         if term is None:
-            term, note = "W27?", "term not stated"
-        if term not in ("W27", "S27", "W27?"):
+            term, note = cfg["priority_term"] + "?", "term not stated"
+        if term not in cfg["terms"] and term != cfg["priority_term"] + "?":
             continue
         out.append(dict(source="Canadian-Tech-Internships", company=company, title=strip_tags(role),
                         locations=[strip_tags(loc)], term=term, url=m.group(1),
@@ -285,7 +293,7 @@ def from_canada():
     return out
 
 
-def from_speedy(name, url):
+def from_speedy(name, url, cfg):
     out = []
     md = get(url)
     section = ""
@@ -312,8 +320,8 @@ def from_speedy(name, url):
         term = term_from_text(title)
         note = ""
         if term is None:
-            term, note = "S27", "term inferred (2027 list, no season in title)"
-        if term not in ("W27", "S27"):
+            term, note = cfg["priority_term"], "term inferred (2027 list, no season in title)"
+        if term not in cfg["terms"]:
             continue
         out.append(dict(source=name, company=company, title=title, locations=[loc], term=term,
                         url=link.group(1), posted=(NOW - timedelta(days=days)).date().isoformat(),
@@ -325,10 +333,12 @@ def from_speedy(name, url):
 def score(c, cfg):
     s = 0
     reasons = []
-    if cfg["priority_term"] == "S27":
-        s += {"W27": 20, "W27?": 15, "S27": 40}[c["term"]]
+    base_term = c["term"].rstrip("?")
+    uncertain = c["term"].endswith("?")
+    if base_term == cfg["priority_term"]:
+        s += 25 if uncertain else 40
     else:
-        s += {"W27": 40, "W27?": 25, "S27": 20}[c["term"]]
+        s += 15 if uncertain else 20
     loc_text = " ".join(c["locations"])
     c["canada"] = bool(CA_PAT.search(loc_text))
     if c["canada"] and cfg["prefer_canada"]:
@@ -420,12 +430,13 @@ def in_sheet(c, existing):
 def cmd_fetch():
     cfg = load_config()
     raw, errors = [], []
-    for label, fn in [("Simplify", from_simplify), ("Canada", from_canada)] + \
-                     [(n, (lambda n=n, u=u: from_speedy(n, u))) for n, u in SPEEDY]:
+    term_label = "/".join(cfg["terms"])
+    for label, fn in [("Simplify", lambda: from_simplify(cfg)), ("Canada", lambda: from_canada(cfg))] + \
+                     [(n, (lambda n=n, u=u: from_speedy(n, u, cfg))) for n, u in SPEEDY]:
         try:
             got = fn()
             raw += got
-            print(f"  {label}: {len(got)} recent W27/S27 postings", file=sys.stderr)
+            print(f"  {label}: {len(got)} recent {term_label} postings", file=sys.stderr)
         except Exception as e:
             errors.append(f"{label}: {e}")
             print(f"  {label}: ERROR {e}", file=sys.stderr)
@@ -447,12 +458,13 @@ def cmd_fetch():
             m = merged[key]
             m["sources"].append(c["source"])
             m["top_company"] |= c["top_company"]
-            if c["term"] != m["term"] and "S27" in (c["term"], m["term"]):
-                # same role posted separately per term: keep the winter link, mention the other
-                if c["term"].startswith("W27"):
+            if c["term"] != m["term"] and cfg["priority_term"] in (c["term"], m["term"]):
+                # same role posted separately per term: keep the priority-term link, mention the other
+                other_term = m["term"] if c["term"] == cfg["priority_term"] else c["term"]
+                if c["term"] == cfg["priority_term"]:
                     for k in ("title", "url", "term", "posted", "locations"):
                         m[k] = c[k]
-                m["note"] = "; ".join(x for x in (m["note"], "also posted for S27") if x)
+                m["note"] = "; ".join(x for x in (m["note"], f"also posted for {other_term}") if x)
             continue
         c["sources"] = [c["source"]]
         c["key"] = key
